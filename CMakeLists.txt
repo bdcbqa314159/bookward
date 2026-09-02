@@ -15,7 +15,7 @@ FetchContent_Declare(dataward
 FetchContent_MakeAvailable(dataward)
 
 # Core logic as a library so tests can drive it; main.cpp stays thin.
-add_library(bookward_core src/commands.cpp)
+add_library(bookward_core src/commands.cpp src/commands_impl.cpp)
 target_include_directories(bookward_core PUBLIC include)
 target_link_libraries(bookward_core PUBLIC dataward::dataward)
 if(MSVC)
