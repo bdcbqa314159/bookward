@@ -6,6 +6,8 @@
 #include <filesystem>
 #include <fstream>
 
+#include "bookward/table_model.hpp"
+
 namespace {
 
 void set_env(const char* name, const std::string& value) {
@@ -133,6 +135,44 @@ TEST(Report, EmptyYearStillValidDocument) {
   EXPECT_NE(doc.find("0 books finished, 0~pages total"), std::string::npos);
   EXPECT_EQ(doc.find("\\begin{tabular}"), std::string::npos) << "no empty tables";
   EXPECT_NE(doc.find("\\end{document}"), std::string::npos);
+}
+
+TEST(TableModel, FilterSortAndNulls) {
+  auto store = fresh("table_model.db");
+  bookward::cmd_add(store, "b", "Beta", "", 300);
+  bookward::cmd_add(store, "a", "Alpha", "", 100);
+  bookward::cmd_add(store, "c", "Gamma", "", 90);
+  bookward::cmd_finish(store, "c", 4);
+  auto books = store.all<bookward::Book>();
+
+  // Sort by id (col 0), all statuses.
+  auto rows = bookward::table_rows(books, 0, "");
+  ASSERT_EQ(rows.size(), 3u);
+  EXPECT_EQ(rows[0][0], "a");
+  EXPECT_EQ(rows[2][0], "c");
+  EXPECT_EQ(rows[0][8], "") << "NULL rating renders empty";
+  EXPECT_EQ(rows[2][8], "4");
+  EXPECT_NE(rows[2][6], "") << "finished date present";
+
+  // Numeric sort by pages (col 3): 90 < 100 < 300, not "100" < "300" < "90".
+  rows = bookward::table_rows(books, 3, "");
+  EXPECT_EQ(rows[0][3], "90");
+  EXPECT_EQ(rows[2][3], "300");
+
+  // Status filter.
+  rows = bookward::table_rows(books, 0, "finished");
+  ASSERT_EQ(rows.size(), 1u);
+  EXPECT_EQ(rows[0][0], "c");
+}
+
+TEST(TableModel, NullRatingsSortLast) {
+  auto store = fresh("table_model_nulls.db");
+  bookward::cmd_add(store, "x", "X", "", 100);
+  bookward::cmd_add(store, "y", "Y", "", 100);
+  bookward::cmd_finish(store, "y", 2);
+  auto rows = bookward::table_rows(store.all<bookward::Book>(), 8, "");
+  EXPECT_EQ(rows[0][0], "y");
+  EXPECT_EQ(rows[1][8], "");
 }
 
 }  // namespace
