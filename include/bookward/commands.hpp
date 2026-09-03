@@ -18,5 +18,9 @@ std::string cmd_finish(dataward::Store& store, const std::string& id,
 std::string cmd_shelve(dataward::Store& store, const std::string& id);
 // status_filter: "" = all, else reading|finished|shelved.
 std::string cmd_list(dataward::Store& store, const std::string& status_filter);
+// Per-year LaTeX report (books finished in `year` + in-progress bars) written
+// to out_dir ("" = cwd); compile=true also runs latexmk for the PDF.
+std::string cmd_report(dataward::Store& store, std::int64_t year, const std::string& out_dir,
+                       bool compile);
 
 }  // namespace bookward
