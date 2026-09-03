@@ -15,7 +15,8 @@ FetchContent_Declare(dataward
 FetchContent_MakeAvailable(dataward)
 
 # Core logic as a library so tests can drive it; main.cpp stays thin.
-add_library(bookward_core src/commands.cpp src/commands_impl.cpp src/report.cpp)
+add_library(bookward_core src/commands.cpp src/commands_impl.cpp src/report.cpp
+                          src/table_model.cpp)
 target_include_directories(bookward_core PUBLIC include)
 target_link_libraries(bookward_core PUBLIC dataward::dataward)
 if(MSVC)
@@ -26,6 +27,18 @@ endif()
 
 add_executable(bookward src/main.cpp)
 target_link_libraries(bookward PRIVATE bookward_core)
+
+# --- TUI ---------------------------------------------------------------------
+FetchContent_Declare(ftxui
+  GIT_REPOSITORY https://github.com/ArthurSonzogni/FTXUI.git
+  GIT_TAG v5.0.0 GIT_SHALLOW TRUE)
+set(FTXUI_ENABLE_INSTALL OFF CACHE BOOL "" FORCE)
+set(FTXUI_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+FetchContent_MakeAvailable(ftxui)
+
+add_executable(bookward-tui src/tui_main.cpp)
+target_link_libraries(bookward-tui PRIVATE bookward_core
+  ftxui::component ftxui::dom ftxui::screen)
 
 option(BOOKWARD_BUILD_TESTS "Build bookward's tests" ${PROJECT_IS_TOP_LEVEL})
 if(BOOKWARD_BUILD_TESTS)
