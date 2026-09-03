@@ -14,6 +14,7 @@ constexpr const char* kUsage = R"(bookward — a reading log
   bookward finish <id> [--rating 1..5]
   bookward shelve <id>
   bookward list [--status reading|finished|shelved]
+  bookward report <year> [--out DIR]
 )";
 
 // Pulls "--flag value" out of args (and erases it); nullopt when absent.
@@ -62,6 +63,10 @@ int main(int argc, char** argv) {
       out = bookward::cmd_shelve(store, args[0]);
     } else if (cmd == "list") {
       out = bookward::cmd_list(store, take_flag(args, "--status").value_or(""));
+    } else if (cmd == "report") {
+      const auto out_dir = take_flag(args, "--out").value_or("");
+      if (args.size() != 1) throw std::runtime_error("usage: report <year> [--out DIR]");
+      out = bookward::cmd_report(store, std::stoll(args[0]), out_dir, /*compile=*/true);
     } else {
       std::fputs(kUsage, stderr);
       return 1;
