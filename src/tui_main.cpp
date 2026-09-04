@@ -262,7 +262,12 @@ int main() {
         buffer.clear();
         status_msg = "cancelled";
       } else if (e == Event::Backspace) {
-        if (!buffer.empty()) buffer.pop_back();
+        // Strip one full UTF-8 codepoint, not one byte — ñ/é are multi-byte.
+        while (!buffer.empty()) {
+          const auto byte = static_cast<unsigned char>(buffer.back());
+          buffer.pop_back();
+          if ((byte & 0xC0) != 0x80) break;  // stop after the leading byte
+        }
       } else if (e.is_character()) {
         buffer += e.character();
       }
