@@ -19,30 +19,6 @@ void set_env(const char* name, const std::string& value) {
 #endif
 }
 
-// The consumer proof: a Book round-trips through dataward.
-TEST(Bookward, BookRoundTripsThroughDataward) {
-  const auto path = std::filesystem::path(testing::TempDir()) / "bookward_smoke.db";
-  std::filesystem::remove(path);
-  set_env("BOOKWARD_DB", path.string());
-
-  auto store = bookward::open_log();
-  bookward::Book dune;
-  dune.id = "dune";
-  dune.title = "Dune";
-  dune.author = "Frank Herbert";
-  dune.pages = 412;
-  dune.started = std::chrono::year{2026} / std::chrono::month{9} / std::chrono::day{1};
-  store.put(dune);
-
-  auto back = store.get<bookward::Book>("dune");
-  ASSERT_TRUE(back.has_value());
-  EXPECT_EQ(back->title, "Dune");
-  EXPECT_EQ(back->status, "reading");
-  EXPECT_EQ(back->current_page, 0);
-  EXPECT_EQ(back->rating, std::nullopt);
-  EXPECT_EQ(back->started, dune.started);
-}
-
 dataward::Store fresh(const char* name) {
   const auto path = std::filesystem::path(testing::TempDir()) / name;
   std::filesystem::remove(path);
@@ -51,151 +27,119 @@ dataward::Store fresh(const char* name) {
   return store;
 }
 
-TEST(Commands, AddThenListAndDuplicateRejected) {
-  auto store = fresh("cmd_add.db");
-  bookward::cmd_add(store, "dune", "Dune", "Frank Herbert", 412);
-  EXPECT_THROW(bookward::cmd_add(store, "dune", "Dune", "", 412), std::runtime_error);
-  EXPECT_THROW(bookward::cmd_add(store, "x", "X", "", 0), std::runtime_error);
+// The consumer proof: a Book round-trips through dataward via open_log().
+TEST(Bookward, BookRoundTripsThroughDataward) {
+  const auto path = std::filesystem::path(testing::TempDir()) / "bookward_smoke.db";
+  std::filesystem::remove(path);
+  set_env("BOOKWARD_DB", path.string());
 
-  auto out = bookward::cmd_list(store, "");
-  EXPECT_NE(out.find("dune"), std::string::npos);
-  EXPECT_NE(out.find("page 0/412"), std::string::npos);
+  auto store = bookward::open_log();
+  bookward::cmd_add(store, "Dune", "Frank Herbert", "1st", 2024, std::nullopt);
+
+  auto back = store.get<bookward::Book>("bk-0001");
+  ASSERT_TRUE(back.has_value());
+  EXPECT_EQ(back->title, "Dune");
+  EXPECT_EQ(back->edition, "1st");
+  EXPECT_EQ(back->year, 2024);
+  EXPECT_EQ(back->worked, std::nullopt);
 }
 
-TEST(Commands, ProgressBoundsAndStatus) {
-  auto store = fresh("cmd_progress.db");
-  bookward::cmd_add(store, "dune", "Dune", "", 412);
-  EXPECT_THROW(bookward::cmd_progress(store, "nope", 10), std::runtime_error);
-  EXPECT_THROW(bookward::cmd_progress(store, "dune", 0), std::runtime_error);
-  EXPECT_THROW(bookward::cmd_progress(store, "dune", 413), std::runtime_error);
-
-  bookward::cmd_progress(store, "dune", 120);
-  EXPECT_EQ(store.get<bookward::Book>("dune")->current_page, 120);
-
-  bookward::cmd_shelve(store, "dune");
-  EXPECT_THROW(bookward::cmd_progress(store, "dune", 130), std::runtime_error);
+TEST(Commands, IdsAreSequentialAndSurviveRemoval) {
+  auto store = fresh("cmd_ids.db");
+  bookward::cmd_add(store, "A", "", "", 2026, std::nullopt);
+  bookward::cmd_add(store, "B", "", "", 2026, std::nullopt);
+  bookward::cmd_remove(store, "bk-0002");
+  auto out = bookward::cmd_add(store, "C", "", "", 2026, std::nullopt);
+  EXPECT_NE(out.find("bk-0002"), std::string::npos)
+      << "next id comes from MAX(id)+1; removing the last book recycles its id";
+  EXPECT_THROW(bookward::cmd_remove(store, "bk-9999"), std::runtime_error);
+  EXPECT_THROW(bookward::cmd_add(store, "", "", "", std::nullopt, std::nullopt),
+               std::runtime_error);
 }
 
-TEST(Commands, FinishSetsEverything) {
-  auto store = fresh("cmd_finish.db");
-  bookward::cmd_add(store, "dune", "Dune", "", 412);
-  EXPECT_THROW(bookward::cmd_finish(store, "dune", 6), std::runtime_error);
+TEST(Commands, FindMatchesTitleAndAuthorCaseInsensitive) {
+  auto store = fresh("cmd_find.db");
+  bookward::cmd_add(store, "Dune", "Frank Herbert", "", 2024, std::nullopt);
+  bookward::cmd_add(store, "Stochastic Calculus", "Shreve", "2nd", 2025, true);
 
-  bookward::cmd_finish(store, "dune", 5);
-  auto b = store.get<bookward::Book>("dune");
-  EXPECT_EQ(b->status, "finished");
-  EXPECT_EQ(b->current_page, 412);
-  EXPECT_EQ(b->rating, 5);
-  EXPECT_TRUE(b->finished.has_value());
+  EXPECT_NE(bookward::cmd_find(store, "dune").find("bk-0001"), std::string::npos);
+  EXPECT_NE(bookward::cmd_find(store, "shreve").find("bk-0002"), std::string::npos);
+  EXPECT_EQ(bookward::cmd_find(store, "tolkien"), "(no books)");
+  EXPECT_THROW(bookward::cmd_find(store, ""), std::runtime_error);
 }
 
-TEST(Commands, ListFiltersByStatus) {
+TEST(Commands, ListFiltersByYearAndWorkedToggles) {
   auto store = fresh("cmd_list.db");
-  bookward::cmd_add(store, "a", "A", "", 100);
-  bookward::cmd_add(store, "b", "B", "", 100);
-  bookward::cmd_finish(store, "b", std::nullopt);
+  bookward::cmd_add(store, "Old", "", "", 2021, std::nullopt);
+  bookward::cmd_add(store, "New", "", "", 2026, false);
 
-  auto reading = bookward::cmd_list(store, "reading");
-  EXPECT_NE(reading.find("a  A"), std::string::npos);
-  EXPECT_EQ(reading.find("b  B"), std::string::npos);
+  EXPECT_EQ(bookward::cmd_list(store, 2021).find("New"), std::string::npos);
+  EXPECT_NE(bookward::cmd_list(store, 0).find("Old"), std::string::npos);
 
-  EXPECT_THROW(bookward::cmd_list(store, "bogus"), std::runtime_error);
-  EXPECT_EQ(bookward::cmd_list(store, "shelved"), "(no books)");
+  bookward::cmd_worked(store, "bk-0002", true);
+  EXPECT_EQ(store.get<bookward::Book>("bk-0002")->worked, true);
+  EXPECT_NE(bookward::cmd_list(store, 2026).find("worked"), std::string::npos);
 }
 
-TEST(Report, GeneratesTexWithTableBarsAndEscaping) {
+TEST(Report, CatalogGroupsByYearNewestFirst) {
   auto store = fresh("cmd_report.db");
-  bookward::cmd_add(store, "tj", "Tom & Jerry 100% Guide", "A_Uthor", 200);
-  bookward::cmd_finish(store, "tj", 4);
-  bookward::cmd_add(store, "dune", "Dune", "Frank Herbert", 412);
-  bookward::cmd_progress(store, "dune", 103);
+  bookward::cmd_add(store, "Tom & Jerry 100% Guide", "A_Uthor", "3rd", 2021, std::nullopt);
+  bookward::cmd_add(store, "Recent", "", "", 2026, true);
 
   const auto dir = std::filesystem::path(testing::TempDir()) / "bookward_report";
-  const auto year = static_cast<int>(std::chrono::year_month_day{
-      std::chrono::floor<std::chrono::days>(std::chrono::system_clock::now())}
-                                         .year());
-  auto msg = bookward::cmd_report(store, year, dir.string(), /*compile=*/false);
-  EXPECT_NE(msg.find(".tex"), std::string::npos);
+  bookward::cmd_report(store, 0, dir.string(), /*compile=*/false);
 
-  std::ifstream in(dir / ("reading-report-" + std::to_string(year) + ".tex"));
+  std::ifstream in(dir / "reading-catalog.tex");
   std::string doc((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
   EXPECT_NE(doc.find("Tom \\& Jerry 100\\% Guide"), std::string::npos) << "escaping";
   EXPECT_NE(doc.find("A\\_Uthor"), std::string::npos);
-  EXPECT_NE(doc.find("1 book finished, 200~pages total, average rating 4.0/5"), std::string::npos);
-  EXPECT_NE(doc.find("page 103/412"), std::string::npos);
-  EXPECT_NE(doc.find("25\\%}"), std::string::npos) << "progress bar percent";
+  EXPECT_NE(doc.find("2 books"), std::string::npos);
+  EXPECT_LT(doc.find("{2026"), doc.find("{2021")) << "newest year first";
+  EXPECT_NE(doc.find("bk-0002 & Recent &  &  & yes"), std::string::npos);
   EXPECT_NE(doc.find("\\end{document}"), std::string::npos);
 }
 
-TEST(Report, EmptyYearStillValidDocument) {
-  auto store = fresh("cmd_report_empty.db");
-  const auto dir = std::filesystem::path(testing::TempDir()) / "bookward_report_empty";
-  bookward::cmd_report(store, 1999, dir.string(), /*compile=*/false);
-  std::ifstream in(dir / "reading-report-1999.tex");
+TEST(Report, SingleYearReportOnlyHasThatYear) {
+  auto store = fresh("cmd_report_year.db");
+  bookward::cmd_add(store, "Old", "", "", 2021, std::nullopt);
+  bookward::cmd_add(store, "New", "", "", 2026, std::nullopt);
+
+  const auto dir = std::filesystem::path(testing::TempDir()) / "bookward_report_year";
+  bookward::cmd_report(store, 2026, dir.string(), /*compile=*/false);
+  std::ifstream in(dir / "reading-2026.tex");
   std::string doc((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
-  EXPECT_NE(doc.find("0 books finished, 0~pages total"), std::string::npos);
-  EXPECT_EQ(doc.find("\\begin{tabular}"), std::string::npos) << "no empty tables";
-  EXPECT_NE(doc.find("\\end{document}"), std::string::npos);
+  EXPECT_NE(doc.find("New"), std::string::npos);
+  EXPECT_EQ(doc.find("Old"), std::string::npos);
 }
 
-TEST(TableModel, FilterSortAndNulls) {
+TEST(TableModel, FilterSortAndEmptyWorked) {
   auto store = fresh("table_model.db");
-  bookward::cmd_add(store, "b", "Beta", "", 300);
-  bookward::cmd_add(store, "a", "Alpha", "", 100);
-  bookward::cmd_add(store, "c", "Gamma", "", 90);
-  bookward::cmd_finish(store, "c", 4);
-  auto books = store.all<bookward::Book>();
+  bookward::cmd_add(store, "Beta", "", "", 2026, true);
+  bookward::cmd_add(store, "Alpha", "", "", 2021, std::nullopt);
 
-  // Sort by id (col 0), all statuses.
-  auto rows = bookward::table_rows(books, 0, "");
-  ASSERT_EQ(rows.size(), 3u);
-  EXPECT_EQ(rows[0][0], "a");
-  EXPECT_EQ(rows[2][0], "c");
-  EXPECT_EQ(rows[0][8], "") << "NULL rating renders empty";
-  EXPECT_EQ(rows[2][8], "4");
-  EXPECT_NE(rows[2][6], "") << "finished date present";
+  auto rows = bookward::table_rows(store.all<bookward::Book>(), 1, 0);  // sort by title
+  ASSERT_EQ(rows.size(), 2u);
+  EXPECT_EQ(rows[0][1], "Alpha");
+  EXPECT_EQ(rows[0][5], "") << "absent worked renders empty";
+  EXPECT_EQ(rows[1][5], "yes");
 
-  // Numeric sort by pages (col 3): 90 < 100 < 300, not "100" < "300" < "90".
-  rows = bookward::table_rows(books, 3, "");
-  EXPECT_EQ(rows[0][3], "90");
-  EXPECT_EQ(rows[2][3], "300");
-
-  // Status filter.
-  rows = bookward::table_rows(books, 0, "finished");
+  rows = bookward::table_rows(store.all<bookward::Book>(), 4, 2021);  // year filter
   ASSERT_EQ(rows.size(), 1u);
-  EXPECT_EQ(rows[0][0], "c");
+  EXPECT_EQ(rows[0][1], "Alpha");
 }
 
-TEST(TableModel, NullRatingsSortLast) {
-  auto store = fresh("table_model_nulls.db");
-  bookward::cmd_add(store, "x", "X", "", 100);
-  bookward::cmd_add(store, "y", "Y", "", 100);
-  bookward::cmd_finish(store, "y", 2);
-  auto rows = bookward::table_rows(store.all<bookward::Book>(), 8, "");
-  EXPECT_EQ(rows[0][0], "y");
-  EXPECT_EQ(rows[1][8], "");
-}
-
-TEST(Stats, AggregatesFinishedBooksOfTheYearOnly) {
+TEST(Stats, CountsPerYearNewestFirst) {
   auto store = fresh("stats.db");
-  bookward::cmd_add(store, "a", "A", "", 100);
-  bookward::cmd_finish(store, "a", 4);
-  bookward::cmd_add(store, "b", "B", "", 250);
-  bookward::cmd_finish(store, "b", 5);
-  bookward::cmd_add(store, "c", "C", "", 999);  // still reading — excluded
+  bookward::cmd_add(store, "A", "", "", 2021, std::nullopt);
+  bookward::cmd_add(store, "B", "", "", 2026, true);
+  bookward::cmd_add(store, "C", "", "", 2026, false);
 
-  const auto year = static_cast<int>(std::chrono::year_month_day{
-      std::chrono::floor<std::chrono::days>(std::chrono::system_clock::now())}
-                                         .year());
-  auto s = bookward::year_stats(store.all<bookward::Book>(), year);
-  EXPECT_EQ(s.finished, 2);
-  EXPECT_EQ(s.pages, 350);
-  EXPECT_DOUBLE_EQ(s.avg_rating(), 4.5);
-  std::int64_t month_sum = 0;
-  for (auto p : s.pages_by_month) month_sum += p;
-  EXPECT_EQ(month_sum, 350) << "every finished page lands in some month";
-
-  EXPECT_EQ(bookward::year_stats(store.all<bookward::Book>(), year - 1).finished, 0);
+  auto counts = bookward::year_counts(store.all<bookward::Book>());
+  ASSERT_EQ(counts.size(), 2u);
+  EXPECT_EQ(counts.begin()->first, 2026) << "newest first";
+  EXPECT_EQ(counts[2026].first, 2);
+  EXPECT_EQ(counts[2026].second, 1) << "one of the 2026 books was worked";
+  EXPECT_EQ(counts[2021].first, 1);
 }
 
 }  // namespace
