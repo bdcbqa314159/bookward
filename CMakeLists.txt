@@ -11,7 +11,7 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 include(FetchContent)
 FetchContent_Declare(dataward
   GIT_REPOSITORY https://github.com/bdcbqa314159/dataward.git
-  GIT_TAG f3e5421af488f694c08d9c6f2709bda93b7359dc)
+  GIT_TAG f3dfa6faa88f9dd58be1682d0f63cb23632d8b9d)  # bundled-fmt: self-contained binaries
 FetchContent_MakeAvailable(dataward)
 
 # Core logic as a library so tests can drive it; main.cpp stays thin.
