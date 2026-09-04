@@ -29,7 +29,16 @@ Element detail_pane(const bookward::Book& b) {
 }
 
 // What the bottom input line is currently collecting.
-enum class Mode { Browse, AddTitle, AddAuthor, AddEdition, AddYear, AddWorked, RemoveConfirm };
+enum class Mode {
+  Browse,
+  AddTitle,
+  AddAuthor,
+  AddEdition,
+  AddYear,
+  AddWorked,
+  EditYear,
+  RemoveConfirm
+};
 
 }  // namespace
 
@@ -71,6 +80,8 @@ int main() {
         return "year (empty = this year): ";
       case Mode::AddWorked:
         return "worked? y/n (empty = not technical): ";
+      case Mode::EditYear:
+        return "set year to: ";
       case Mode::RemoveConfirm:
         return "remove — type the id to confirm: ";
       default:
@@ -113,6 +124,9 @@ int main() {
               bookward::cmd_add(store, add_title, add_author, add_edition, add_year, worked);
           break;
         }
+        case Mode::EditYear:
+          status_msg = bookward::cmd_year(store, selected_id(), std::stoll(buffer));
+          break;
         case Mode::RemoveConfirm:
           if (buffer == selected_id()) {
             status_msg = bookward::cmd_remove(store, buffer);
@@ -183,7 +197,8 @@ int main() {
                text(std::string("  [1] Books") + (tab == 0 ? "*" : "") + " [2] Table" +
                     (tab == 1 ? "*" : "") + " [3] Stats" + (tab == 2 ? "*" : "") + "  "),
                filler(),
-               text(tab == 0 ? "[a]dd [w]orked [x] remove [r]eport [q]uit " : "[q]uit ") | dim}),
+               text(tab == 0 ? "[a]dd [w]orked [y]ear [x] remove [r]eport [q]uit " : "[q]uit ") |
+                   dim}),
          body->Render() | flex, bottom});
   });
 
@@ -236,6 +251,7 @@ int main() {
           }
           reload();
         }
+        if (e == Event::Character('y')) mode = Mode::EditYear;
         if (e == Event::Character('x')) mode = Mode::RemoveConfirm;
         if (e == Event::Character('r')) {
           try {

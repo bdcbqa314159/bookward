@@ -100,6 +100,14 @@ std::string cmd_worked(dataward::Store& store, const std::string& id, bool worke
   return one_line(b);
 }
 
+std::string cmd_year(dataward::Store& store, const std::string& id, std::int64_t year) {
+  if (year < 1000 || year > 9999) throw std::runtime_error("year must be 4 digits");
+  auto b = must_get(store, id);
+  b.year = year;
+  store.put(b);
+  return one_line(b);
+}
+
 std::string cmd_remove(dataward::Store& store, const std::string& id) {
   auto b = must_get(store, id);
   store.remove<Book>(id);

@@ -79,6 +79,12 @@ TEST(Commands, ListFiltersByYearAndWorkedToggles) {
   bookward::cmd_worked(store, "bk-0002", true);
   EXPECT_EQ(store.get<bookward::Book>("bk-0002")->worked, true);
   EXPECT_NE(bookward::cmd_list(store, 2026).find("worked"), std::string::npos);
+
+  // Manual year correction: seeded wrong, fixed after the fact.
+  bookward::cmd_year(store, "bk-0002", 2024);
+  EXPECT_EQ(store.get<bookward::Book>("bk-0002")->year, 2024);
+  EXPECT_THROW(bookward::cmd_year(store, "bk-0002", 26), std::runtime_error);
+  EXPECT_THROW(bookward::cmd_year(store, "bk-9999", 2024), std::runtime_error);
 }
 
 TEST(Report, CatalogGroupsByYearNewestFirst) {
