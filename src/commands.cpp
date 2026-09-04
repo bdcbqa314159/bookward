@@ -17,6 +17,7 @@ dataward::Store open_log() {
   }
   auto store = dataward::Store::sqlite(path);
   store.ensure<Book>();
+  store.ensure<Reading>();
   return store;
 }
 
