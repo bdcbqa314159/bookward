@@ -15,19 +15,6 @@ using namespace ftxui;
 
 namespace {
 
-Element detail_pane(const bookward::Book& b) {
-  Elements lines;
-  lines.push_back(text(b.title) | bold);
-  if (!b.author.empty()) lines.push_back(text("by " + b.author));
-  if (!b.edition.empty()) lines.push_back(text(b.edition));
-  lines.push_back(text("read in " + std::to_string(b.year)));
-  if (b.worked)
-    lines.push_back(text(*b.worked ? "worked through" : "not worked through") | underlined);
-  lines.push_back(separator());
-  lines.push_back(text("pdf: " + b.id + ".pdf") | dim);
-  return vbox(lines) | border | flex;
-}
-
 // What the bottom input line is currently collecting.
 enum class Mode {
   Browse,
@@ -36,7 +23,12 @@ enum class Mode {
   AddEdition,
   AddYear,
   AddWorked,
-  EditYear,
+  EditTitle,
+  EditAuthor,
+  EditEdition,
+  AgainYear,
+  YearFrom,
+  YearTo,
   RemoveConfirm
 };
 
@@ -46,13 +38,19 @@ int main() {
   auto store = bookward::open_log();
 
   std::vector<bookward::Book> books;
+  std::vector<bookward::Reading> readings;
   std::vector<std::string> entries;
   int selected = 0;
   auto reload = [&] {
-    books = store.where<bookward::Book>("1=1 ORDER BY \"year\" DESC, \"id\"");
+    books = store.where<bookward::Book>("1=1 ORDER BY \"id\"");
+    readings = store.where<bookward::Reading>("1=1 ORDER BY \"year\", \"book_id\"");
     entries.clear();
-    for (const auto& b : books)
-      entries.push_back(b.id + "  " + b.title + "  [" + std::to_string(b.year) + "]");
+    for (const auto& b : books) {
+      std::string years;
+      for (const auto& r : readings)
+        if (r.book_id == b.id) years += (years.empty() ? "" : ",") + std::to_string(r.year);
+      entries.push_back(b.id + "  " + b.title + "  [" + years + "]");
+    }
     if (selected >= static_cast<int>(entries.size()))
       selected = entries.empty() ? 0 : static_cast<int>(entries.size()) - 1;
   };
@@ -65,8 +63,29 @@ int main() {
   Mode mode = Mode::Browse;
   std::string buffer;
   std::string add_title, add_author, add_edition;
-  std::optional<std::int64_t> add_year;
+  std::optional<std::int64_t> add_year, year_from;
   std::string status_msg = "ready";
+
+  auto selected_book = [&]() -> const bookward::Book& {
+    return books[static_cast<std::size_t>(selected)];
+  };
+  auto selected_id = [&]() -> std::string { return books.empty() ? "" : selected_book().id; };
+
+  auto detail_pane = [&](const bookward::Book& b) {
+    Elements lines;
+    lines.push_back(text(b.title) | bold);
+    if (!b.author.empty()) lines.push_back(text("by " + b.author));
+    if (!b.edition.empty()) lines.push_back(text(b.edition));
+    std::string years;
+    for (auto y : bookward::years_of(store, b.id))
+      years += (years.empty() ? "read in " : ", ") + std::to_string(y);
+    lines.push_back(text(years));
+    if (b.worked)
+      lines.push_back(text(*b.worked ? "worked through" : "not worked through") | underlined);
+    lines.push_back(separator());
+    lines.push_back(text("pdf: " + b.id + ".pdf") | dim);
+    return vbox(lines) | border | flex;
+  };
 
   auto prompt_label = [&]() -> std::string {
     switch (mode) {
@@ -80,17 +99,23 @@ int main() {
         return "year (empty = this year): ";
       case Mode::AddWorked:
         return "worked? y/n (empty = not technical): ";
-      case Mode::EditYear:
-        return "set year to: ";
+      case Mode::EditTitle:
+        return "title: ";
+      case Mode::EditAuthor:
+        return "author: ";
+      case Mode::EditEdition:
+        return "edition: ";
+      case Mode::AgainYear:
+        return "re-read year (empty = this year): ";
+      case Mode::YearFrom:
+        return "move which year: ";
+      case Mode::YearTo:
+        return "to year: ";
       case Mode::RemoveConfirm:
         return "remove — type the id to confirm: ";
       default:
         return "";
     }
-  };
-
-  auto selected_id = [&]() -> std::string {
-    return books.empty() ? "" : books[static_cast<std::size_t>(selected)].id;
   };
 
   auto apply = [&] {
@@ -124,12 +149,35 @@ int main() {
               bookward::cmd_add(store, add_title, add_author, add_edition, add_year, worked);
           break;
         }
-        case Mode::EditYear:
-          status_msg = bookward::cmd_year(store, selected_id(), std::stoll(buffer));
+        case Mode::EditTitle:
+          add_title = buffer;  // reuse the add buffers for the edit walk
+          mode = Mode::EditAuthor;
+          buffer = selected_book().author;
+          return;
+        case Mode::EditAuthor:
+          add_author = buffer;
+          mode = Mode::EditEdition;
+          buffer = selected_book().edition;
+          return;
+        case Mode::EditEdition:
+          status_msg = bookward::cmd_edit(store, selected_id(), add_title, add_author, buffer);
+          break;
+        case Mode::AgainYear:
+          status_msg = bookward::cmd_again(
+              store, selected_id(),
+              buffer.empty() ? std::nullopt : std::optional(std::stoll(buffer)));
+          break;
+        case Mode::YearFrom:
+          year_from = std::stoll(buffer);
+          mode = Mode::YearTo;
+          buffer.clear();
+          return;
+        case Mode::YearTo:
+          status_msg = bookward::cmd_year(store, selected_id(), year_from, std::stoll(buffer));
           break;
         case Mode::RemoveConfirm:
           if (buffer == selected_id()) {
-            status_msg = bookward::cmd_remove(store, buffer);
+            status_msg = bookward::cmd_remove(store, buffer, std::nullopt);
           } else {
             status_msg = "id mismatch — not removed";
           }
@@ -148,13 +196,13 @@ int main() {
   auto menu = Menu(&entries, &selected);
   auto books_view = Renderer(menu, [&] {
     Element right = books.empty() ? text("(no books — press a to add one)") | center | border | flex
-                                  : detail_pane(books[static_cast<std::size_t>(selected)]);
+                                  : detail_pane(selected_book());
     return hbox(
         {menu->Render() | vscroll_indicator | frame | border | size(WIDTH, LESS_THAN, 48), right});
   });
 
   auto table_view = Renderer([&] {
-    auto rows = bookward::table_rows(books, sort_col, year_filter);
+    auto rows = bookward::table_rows(books, readings, sort_col, year_filter);
     std::vector<std::vector<std::string>> cells;
     std::vector<std::string> header(bookward::kTableColumns.begin(), bookward::kTableColumns.end());
     header[static_cast<std::size_t>(sort_col)] += " ↓";
@@ -169,11 +217,13 @@ int main() {
   });
 
   auto stats_view = Renderer([&] {
-    const auto counts = bookward::year_counts(books);
+    const auto counts = bookward::year_counts(books, readings);
     std::int64_t max_count = 1;
     for (const auto& [y, c] : counts) max_count = std::max(max_count, c.first);
     Elements lines;
-    lines.push_back(text(std::to_string(books.size()) + " books total") | bold);
+    lines.push_back(text(std::to_string(readings.size()) + " readings, " +
+                         std::to_string(books.size()) + " books") |
+                    bold);
     lines.push_back(separator());
     for (const auto& [y, c] : counts) {
       lines.push_back(hbox(
@@ -197,7 +247,8 @@ int main() {
                text(std::string("  [1] Books") + (tab == 0 ? "*" : "") + " [2] Table" +
                     (tab == 1 ? "*" : "") + " [3] Stats" + (tab == 2 ? "*" : "") + "  "),
                filler(),
-               text(tab == 0 ? "[a]dd [w]orked [y]ear [x] remove [r]eport [q]uit " : "[q]uit ") |
+               text(tab == 0 ? "[a]dd [e]dit [g] again [w]orked [y]ear [x] remove [r]eport [q]uit "
+                             : "[q]uit ") |
                    dim}),
          body->Render() | flex, bottom});
   });
@@ -229,7 +280,7 @@ int main() {
     if (tab == 1 && e == Event::Character('f')) {
       // Cycle: all -> each year present (newest first) -> all.
       std::vector<std::int64_t> years;
-      for (const auto& [y, c] : bookward::year_counts(books)) years.push_back(y);
+      for (const auto& [y, c] : bookward::year_counts(books, readings)) years.push_back(y);
       if (years.empty()) {
         year_filter = 0;
       } else if (year_filter == 0) {
@@ -242,16 +293,30 @@ int main() {
     if (tab == 0) {
       if (e == Event::Character('a')) mode = Mode::AddTitle;
       if (!books.empty()) {
+        if (e == Event::Character('e')) {
+          mode = Mode::EditTitle;
+          buffer = selected_book().title;  // pre-filled: adjust, don't retype
+          return true;
+        }
+        if (e == Event::Character('g')) mode = Mode::AgainYear;
         if (e == Event::Character('w')) {
           try {
-            const auto& b = books[static_cast<std::size_t>(selected)];
+            const auto& b = selected_book();
             status_msg = bookward::cmd_worked(store, b.id, !(b.worked && *b.worked));
           } catch (const std::exception& ex) {
             status_msg = ex.what();
           }
           reload();
         }
-        if (e == Event::Character('y')) mode = Mode::EditYear;
+        if (e == Event::Character('y')) {
+          const auto years = bookward::years_of(store, selected_id());
+          if (years.size() <= 1) {
+            year_from = years.empty() ? std::nullopt : std::optional(years.front());
+            mode = Mode::YearTo;
+          } else {
+            mode = Mode::YearFrom;
+          }
+        }
         if (e == Event::Character('x')) mode = Mode::RemoveConfirm;
         if (e == Event::Character('r')) {
           try {
