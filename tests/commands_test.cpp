@@ -6,6 +6,7 @@
 #include <filesystem>
 #include <fstream>
 
+#include "bookward/stats.hpp"
 #include "bookward/table_model.hpp"
 
 namespace {
@@ -173,6 +174,28 @@ TEST(TableModel, NullRatingsSortLast) {
   auto rows = bookward::table_rows(store.all<bookward::Book>(), 8, "");
   EXPECT_EQ(rows[0][0], "y");
   EXPECT_EQ(rows[1][8], "");
+}
+
+TEST(Stats, AggregatesFinishedBooksOfTheYearOnly) {
+  auto store = fresh("stats.db");
+  bookward::cmd_add(store, "a", "A", "", 100);
+  bookward::cmd_finish(store, "a", 4);
+  bookward::cmd_add(store, "b", "B", "", 250);
+  bookward::cmd_finish(store, "b", 5);
+  bookward::cmd_add(store, "c", "C", "", 999);  // still reading — excluded
+
+  const auto year = static_cast<int>(std::chrono::year_month_day{
+      std::chrono::floor<std::chrono::days>(std::chrono::system_clock::now())}
+                                         .year());
+  auto s = bookward::year_stats(store.all<bookward::Book>(), year);
+  EXPECT_EQ(s.finished, 2);
+  EXPECT_EQ(s.pages, 350);
+  EXPECT_DOUBLE_EQ(s.avg_rating(), 4.5);
+  std::int64_t month_sum = 0;
+  for (auto p : s.pages_by_month) month_sum += p;
+  EXPECT_EQ(month_sum, 350) << "every finished page lands in some month";
+
+  EXPECT_EQ(bookward::year_stats(store.all<bookward::Book>(), year - 1).finished, 0);
 }
 
 }  // namespace

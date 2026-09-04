@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "bookward/commands.hpp"
+#include "bookward/stats.hpp"
 
 namespace bookward {
 
@@ -64,18 +65,7 @@ std::string cmd_report(dataward::Store& store, std::int64_t year, const std::str
                         y + "-01-01", y + "-12-31");
   auto reading = store.where<Book>("\"status\" = 'reading' ORDER BY \"id\"");
 
-  std::int64_t total_pages = 0;
-  std::array<std::int64_t, 12> pages_by_month{};
-  std::int64_t rating_sum = 0, rated = 0;
-  for (const auto& b : finished) {
-    total_pages += b.pages;
-    // Convention: a book's pages count toward its finish month.
-    pages_by_month[static_cast<unsigned>(b.finished->month()) - 1] += b.pages;
-    if (b.rating) {
-      rating_sum += *b.rating;
-      ++rated;
-    }
-  }
+  const YearStats stats = year_stats(finished, year);
 
   std::string doc;
   doc += "\\documentclass[11pt,a4paper]{article}\n";
@@ -86,11 +76,11 @@ std::string cmd_report(dataward::Store& store, std::int64_t year, const std::str
   doc += "\\begin{document}\n\\maketitle\n";
 
   doc += "\\section*{Summary}\n";
-  doc += std::to_string(finished.size()) + " book" + (finished.size() == 1 ? "" : "s") +
-         " finished, " + std::to_string(total_pages) + "~pages total";
-  if (rated > 0) {
+  doc += std::to_string(stats.finished) + " book" + (stats.finished == 1 ? "" : "s") +
+         " finished, " + std::to_string(stats.pages) + "~pages total";
+  if (stats.rated > 0) {
     char avg[16];
-    std::snprintf(avg, sizeof avg, "%.1f", static_cast<double>(rating_sum) / rated);
+    std::snprintf(avg, sizeof avg, "%.1f", stats.avg_rating());
     doc += ", average rating " + std::string(avg) + "/5";
   }
   doc += ".\n";
@@ -108,9 +98,9 @@ std::string cmd_report(dataward::Store& store, std::int64_t year, const std::str
     doc += "\\section*{Pages per Month}\n\\begin{tabular}{lr}\n\\toprule\n";
     doc += "Month & Pages \\\\\n\\midrule\n";
     for (int m = 0; m < 12; ++m)
-      if (pages_by_month[static_cast<std::size_t>(m)] > 0)
+      if (stats.pages_by_month[static_cast<std::size_t>(m)] > 0)
         doc += std::string(kMonths[static_cast<std::size_t>(m)]) + " & " +
-               std::to_string(pages_by_month[static_cast<std::size_t>(m)]) + " \\\\\n";
+               std::to_string(stats.pages_by_month[static_cast<std::size_t>(m)]) + " \\\\\n";
     doc += "\\bottomrule\n\\end{tabular}\n";
   }
 
