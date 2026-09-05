@@ -183,4 +183,16 @@ TEST(Stats, CountsReadingsPerYear) {
   EXPECT_EQ(counts[2021].first, 1);
 }
 
+TEST(Commands, WorkedTriState) {
+  auto store = fresh("cmd_worked.db");
+  bookward::cmd_add(store, "A", "", "", 2026, std::nullopt);
+
+  bookward::cmd_worked(store, "bk-0001", true);
+  EXPECT_EQ(store.get<bookward::Book>("bk-0001")->worked, true);
+  bookward::cmd_worked(store, "bk-0001", false);
+  EXPECT_EQ(store.get<bookward::Book>("bk-0001")->worked, false);
+  bookward::cmd_worked(store, "bk-0001", std::nullopt);  // clear: not a technical book
+  EXPECT_EQ(store.get<bookward::Book>("bk-0001")->worked, std::nullopt);
+}
+
 }  // namespace

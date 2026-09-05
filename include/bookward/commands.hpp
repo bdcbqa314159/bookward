@@ -26,7 +26,8 @@ std::string cmd_edit(dataward::Store& store, const std::string& id,
 // book has exactly one reading.
 std::string cmd_year(dataward::Store& store, const std::string& id,
                      std::optional<std::int64_t> from, std::int64_t to);
-std::string cmd_worked(dataward::Store& store, const std::string& id, bool worked);
+// nullopt clears the field back to "not a technical book".
+std::string cmd_worked(dataward::Store& store, const std::string& id, std::optional<bool> worked);
 // year given: forget just that reading. year nullopt: remove book + readings.
 std::string cmd_remove(dataward::Store& store, const std::string& id,
                        std::optional<std::int64_t> year);

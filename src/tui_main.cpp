@@ -26,6 +26,7 @@ enum class Mode {
   EditTitle,
   EditAuthor,
   EditEdition,
+  EditWorked,
   AgainYear,
   YearFrom,
   YearTo,
@@ -62,9 +63,21 @@ int main() {
 
   Mode mode = Mode::Browse;
   std::string buffer;
+  int cursor = 0;
   std::string add_title, add_author, add_edition;
   std::optional<std::int64_t> add_year, year_from;
   std::string status_msg = "ready";
+
+  // The bottom line is a real FTXUI Input: arrows, mid-string insertion,
+  // unicode-aware editing — not a hand-rolled append-only buffer.
+  InputOption input_opt;
+  input_opt.cursor_position = &cursor;
+  auto prompt_input = Input(&buffer, input_opt);
+
+  auto set_buffer = [&](const std::string& value) {
+    buffer = value;
+    cursor = static_cast<int>(value.size());
+  };
 
   auto selected_book = [&]() -> const bookward::Book& {
     return books[static_cast<std::size_t>(selected)];
@@ -105,6 +118,8 @@ int main() {
         return "author: ";
       case Mode::EditEdition:
         return "edition: ";
+      case Mode::EditWorked:
+        return "worked? y/n (empty = not technical): ";
       case Mode::AgainYear:
         return "re-read year (empty = this year): ";
       case Mode::YearFrom:
@@ -124,22 +139,22 @@ int main() {
         case Mode::AddTitle:
           add_title = buffer;
           mode = Mode::AddAuthor;
-          buffer.clear();
+          set_buffer("");
           return;
         case Mode::AddAuthor:
           add_author = buffer;
           mode = Mode::AddEdition;
-          buffer.clear();
+          set_buffer("");
           return;
         case Mode::AddEdition:
           add_edition = buffer;
           mode = Mode::AddYear;
-          buffer.clear();
+          set_buffer("");
           return;
         case Mode::AddYear:
           add_year = buffer.empty() ? std::nullopt : std::optional(std::stoll(buffer));
           mode = Mode::AddWorked;
-          buffer.clear();
+          set_buffer("");
           return;
         case Mode::AddWorked: {
           std::optional<bool> worked;
@@ -152,16 +167,28 @@ int main() {
         case Mode::EditTitle:
           add_title = buffer;  // reuse the add buffers for the edit walk
           mode = Mode::EditAuthor;
-          buffer = selected_book().author;
+          set_buffer(selected_book().author);
           return;
         case Mode::EditAuthor:
           add_author = buffer;
           mode = Mode::EditEdition;
-          buffer = selected_book().edition;
+          set_buffer(selected_book().edition);
           return;
-        case Mode::EditEdition:
-          status_msg = bookward::cmd_edit(store, selected_id(), add_title, add_author, buffer);
+        case Mode::EditEdition: {
+          add_edition = buffer;
+          mode = Mode::EditWorked;
+          const auto& w = selected_book().worked;
+          set_buffer(w ? (*w ? "y" : "n") : "");
+          return;
+        }
+        case Mode::EditWorked: {
+          std::optional<bool> worked;
+          if (buffer == "y") worked = true;
+          if (buffer == "n") worked = false;
+          bookward::cmd_edit(store, selected_id(), add_title, add_author, add_edition);
+          status_msg = bookward::cmd_worked(store, selected_id(), worked);
           break;
+        }
         case Mode::AgainYear:
           status_msg = bookward::cmd_again(
               store, selected_id(),
@@ -170,7 +197,7 @@ int main() {
         case Mode::YearFrom:
           year_from = std::stoll(buffer);
           mode = Mode::YearTo;
-          buffer.clear();
+          set_buffer("");
           return;
         case Mode::YearTo:
           status_msg = bookward::cmd_year(store, selected_id(), year_from, std::stoll(buffer));
@@ -189,7 +216,7 @@ int main() {
       status_msg = e.what();
     }
     mode = Mode::Browse;
-    buffer.clear();
+    set_buffer("");
     reload();
   };
 
@@ -238,10 +265,9 @@ int main() {
   auto screen = ScreenInteractive::Fullscreen();
 
   auto app = Renderer(body, [&] {
-    Element bottom =
-        mode == Mode::Browse
-            ? text(" " + status_msg + " ") | dim
-            : hbox({text(" " + prompt_label()) | bold, text(buffer), text("▌") | blink});
+    Element bottom = mode == Mode::Browse
+                         ? text(" " + status_msg + " ") | dim
+                         : hbox({text(" " + prompt_label()) | bold, prompt_input->Render() | flex});
     return vbox(
         {hbox({text(" bookward ") | bold | inverted,
                text(std::string("  [1] Books") + (tab == 0 ? "*" : "") + " [2] Table" +
@@ -257,21 +283,15 @@ int main() {
     if (mode != Mode::Browse) {  // input line owns the keyboard
       if (e == Event::Return) {
         apply();
-      } else if (e == Event::Escape) {
-        mode = Mode::Browse;
-        buffer.clear();
-        status_msg = "cancelled";
-      } else if (e == Event::Backspace) {
-        // Strip one full UTF-8 codepoint, not one byte — ñ/é are multi-byte.
-        while (!buffer.empty()) {
-          const auto byte = static_cast<unsigned char>(buffer.back());
-          buffer.pop_back();
-          if ((byte & 0xC0) != 0x80) break;  // stop after the leading byte
-        }
-      } else if (e.is_character()) {
-        buffer += e.character();
+        return true;
       }
-      return true;
+      if (e == Event::Escape) {
+        mode = Mode::Browse;
+        set_buffer("");
+        status_msg = "cancelled";
+        return true;
+      }
+      return prompt_input->OnEvent(e);  // arrows, insertion, deletion — Input's job
     }
     if (e == Event::Character('q')) {
       screen.Exit();
@@ -300,14 +320,20 @@ int main() {
       if (!books.empty()) {
         if (e == Event::Character('e')) {
           mode = Mode::EditTitle;
-          buffer = selected_book().title;  // pre-filled: adjust, don't retype
+          set_buffer(selected_book().title);  // pre-filled: adjust, don't retype
           return true;
         }
         if (e == Event::Character('g')) mode = Mode::AgainYear;
         if (e == Event::Character('w')) {
           try {
-            const auto& b = selected_book();
-            status_msg = bookward::cmd_worked(store, b.id, !(b.worked && *b.worked));
+            // Cycle the tri-state: not technical -> worked -> not worked -> not technical.
+            const auto& w = selected_book().worked;
+            std::optional<bool> next;
+            if (!w)
+              next = true;
+            else if (*w)
+              next = false;
+            status_msg = bookward::cmd_worked(store, selected_id(), next);
           } catch (const std::exception& ex) {
             status_msg = ex.what();
           }
