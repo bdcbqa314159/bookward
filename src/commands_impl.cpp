@@ -142,7 +142,7 @@ std::string cmd_year(dataward::Store& store, const std::string& id,
   return one_line(store, b);
 }
 
-std::string cmd_worked(dataward::Store& store, const std::string& id, bool worked) {
+std::string cmd_worked(dataward::Store& store, const std::string& id, std::optional<bool> worked) {
   auto b = must_get(store, id);
   b.worked = worked;
   store.put(b);

@@ -14,7 +14,7 @@ constexpr const char* kUsage = R"(bookward — a reading catalog (ids name the P
   bookward edit <id> [--title T] [--author A] [--edition E]
   bookward find <text>                  search titles and authors
   bookward list [--year Y]
-  bookward worked <id> yes|no
+  bookward worked <id> yes|no|clear
   bookward year <id> [from] <to>        move a reading to another year
   bookward remove <id> [--year Y]       forget one reading, or the whole book
   bookward report [year]                LaTeX/PDF catalog (no year = everything)
@@ -84,8 +84,9 @@ int main(int argc, char** argv) {
     } else if (cmd == "list") {
       out = bookward::cmd_list(store, parse_year_flag(args).value_or(0));
     } else if (cmd == "worked") {
-      if (args.size() != 2) throw std::runtime_error("usage: worked <id> yes|no");
-      out = bookward::cmd_worked(store, args[0], *parse_worked(args[1]));
+      if (args.size() != 2) throw std::runtime_error("usage: worked <id> yes|no|clear");
+      out = bookward::cmd_worked(store, args[0],
+                                 args[1] == "clear" ? std::nullopt : parse_worked(args[1]));
     } else if (cmd == "year") {
       if (args.size() == 2) {
         out = bookward::cmd_year(store, args[0], std::nullopt, std::stoll(args[1]));
