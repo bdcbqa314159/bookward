@@ -120,24 +120,33 @@ TEST(Commands, FindAndListShowAllYears) {
       << "re-read appears in the later year too";
 }
 
-TEST(Report, RereadAppearsUnderBothYears) {
+TEST(Report, BibliographyEntriesInTexAndMarkdown) {
   auto store = fresh("cmd_report.db");
   bookward::cmd_add(store, "Tom & Jerry 100% Guide", "A_Uthor", "3rd", 2021, std::nullopt);
   bookward::cmd_again(store, "bk-0001", 2026);
-  bookward::cmd_add(store, "Recent", "", "", 2026, true);
+  bookward::cmd_add(store, "Recent", "Shreve", "2nd", 2026, true);
 
   const auto dir = std::filesystem::path(testing::TempDir()) / "bookward_report";
   bookward::cmd_report(store, 0, dir.string(), /*compile=*/false);
 
   std::ifstream in(dir / "reading-catalog.tex");
   std::string doc((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
-  EXPECT_NE(doc.find("Tom \\& Jerry 100\\% Guide"), std::string::npos) << "escaping";
+  EXPECT_NE(doc.find("\\hangindent=2em A\\_Uthor. \\emph{Tom \\& Jerry 100\\% Guide}. 3rd."),
+            std::string::npos)
+      << "bibliography entry, escaped";
+  EXPECT_EQ(doc.find("tabular"), std::string::npos) << "no tables anymore";
   EXPECT_NE(doc.find("3 readings, 2 distinct books"), std::string::npos);
   EXPECT_LT(doc.find("{2026"), doc.find("{2021")) << "newest year first";
-  // The re-read book appears in both year sections.
   const auto first = doc.find("Tom \\&");
-  EXPECT_NE(doc.find("Tom \\&", first + 1), std::string::npos);
+  EXPECT_NE(doc.find("Tom \\&", first + 1), std::string::npos) << "re-read in both year sections";
   EXPECT_NE(doc.find("\\end{document}"), std::string::npos);
+
+  std::ifstream md_in(dir / "reading-catalog.md");
+  std::string md((std::istreambuf_iterator<char>(md_in)), std::istreambuf_iterator<char>());
+  EXPECT_NE(md.find("## 2026 — 2 books"), std::string::npos);
+  EXPECT_NE(md.find("- Shreve. *Recent*. 2nd. (bk-0002) — **worked**"), std::string::npos);
+  EXPECT_NE(md.find("- A_Uthor. *Tom & Jerry 100% Guide*. 3rd. (bk-0001)"), std::string::npos)
+      << "markdown is unescaped";
 }
 
 TEST(TableModel, YearsAggregateAndFilter) {
