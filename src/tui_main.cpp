@@ -273,8 +273,9 @@ int main() {
                text(std::string("  [1] Books") + (tab == 0 ? "*" : "") + " [2] Table" +
                     (tab == 1 ? "*" : "") + " [3] Stats" + (tab == 2 ? "*" : "") + "  "),
                filler(),
-               text(tab == 0 ? "[a]dd [e]dit [g] again [w]orked [y]ear [x] remove [r]eport [q]uit "
-                             : "[q]uit ") |
+               text(tab == 0 ? "[a]dd [e]dit [g] again [w]orked [y]ear [x] remove [r]eport [u] "
+                               "[q]uit "
+                             : "[u] refresh [q]uit ") |
                    dim}),
          body->Render() | flex, bottom});
   });
@@ -300,6 +301,10 @@ int main() {
     if (e == Event::Character('1')) tab = 0;
     if (e == Event::Character('2')) tab = 1;
     if (e == Event::Character('3')) tab = 2;
+    if (e == Event::Character('u')) {  // another frontend may have written the db
+      reload();
+      status_msg = "refreshed";
+    }
     if (tab == 1 && e == Event::Character('s'))
       sort_col = (sort_col + 1) % static_cast<int>(bookward::kTableColumns.size());
     if (tab == 1 && e == Event::Character('f')) {

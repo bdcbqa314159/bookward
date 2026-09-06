@@ -91,12 +91,14 @@ std::string cmd_add(dataward::Store& store, const std::string& title, const std:
   if (title.empty()) throw std::runtime_error("add needs a title");
 
   Book b;
-  b.id = next_id(store);
   b.title = title;
   b.author = author;
   b.edition = edition;
   b.worked = worked;
-  auto txn = store.begin();
+  // The write lock is held from BEGIN, so MAX(id)+1 cannot race a concurrent
+  // add from another frontend (CLI/TUI/GUI share the file).
+  auto txn = store.begin_immediate();
+  b.id = next_id(store);
   store.put(b);
   log_reading(store, b.id, year.value_or(this_year()));
   txn.commit();
