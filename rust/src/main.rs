@@ -24,6 +24,43 @@ fn parse_year(s: &str) -> Result<i64, String> {
     s.trim().parse().map_err(|_| format!("not a year: {s}"))
 }
 
+/// A real macOS text dialog: full native input — press-and-hold accents work.
+/// Returns None when cancelled. (winit/egui cannot show the accent popup:
+/// upstream NSTextInputClient limitation.) Blocking: run it off the UI thread.
+fn native_input_blocking(
+    prompt: &str,
+    current: &str,
+    pid_slot: &std::sync::Mutex<Option<u32>>,
+) -> Option<String> {
+    let script = format!(
+        "text returned of (display dialog {:?} default answer {:?} with title \"bookward\")",
+        prompt, current
+    );
+    let child = std::process::Command::new("osascript")
+        .args(["-e", &script])
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .ok()?;
+    *pid_slot.lock().unwrap() = Some(child.id());
+    let out = child.wait_with_output();
+    *pid_slot.lock().unwrap() = None;
+    let out = out.ok()?;
+    if !out.status.success() {
+        return None; // cancelled (or killed because the app closed)
+    }
+    Some(String::from_utf8_lossy(&out.stdout).trim_end().to_string())
+}
+
+/// Which field a native dialog result lands in.
+#[derive(Clone, Copy)]
+enum NativeTarget {
+    EditTitle,
+    EditAuthor,
+    AddTitle,
+    AddAuthor,
+}
+
 #[derive(Default)]
 struct Form {
     title: String,
@@ -46,6 +83,21 @@ struct App {
     move_from: String,
     move_to: String,
     confirm_remove: bool,
+    native_request: Option<NativeTarget>,
+    native_pending: Option<(NativeTarget, std::sync::mpsc::Receiver<Option<String>>)>,
+    native_child: std::sync::Arc<std::sync::Mutex<Option<u32>>>,
+}
+
+// The dialog is a separate osascript process; without this, closing the main
+// window leaves the child dialog orphaned on screen.
+impl Drop for App {
+    fn drop(&mut self) {
+        if let Some(pid) = *self.native_child.lock().unwrap() {
+            let _ = std::process::Command::new("kill")
+                .arg(pid.to_string())
+                .status();
+        }
+    }
 }
 
 impl App {
@@ -63,6 +115,9 @@ impl App {
             move_from: String::new(),
             move_to: String::new(),
             confirm_remove: false,
+            native_request: None,
+            native_pending: None,
+            native_child: std::sync::Arc::new(std::sync::Mutex::new(None)),
         };
         app.refresh();
         app
@@ -122,6 +177,61 @@ impl App {
             });
     }
 
+    fn native_button(&mut self, ui: &mut egui::Ui, target: NativeTarget) {
+        let busy = self.native_pending.is_some();
+        if ui
+            .add_enabled(!busy, egui::Button::new("⌨"))
+            .on_hover_text("native edit — press-and-hold accents work here")
+            .clicked()
+        {
+            self.native_request = Some(target);
+        }
+    }
+
+    fn field_of(&mut self, target: NativeTarget) -> &mut String {
+        match target {
+            NativeTarget::EditTitle => &mut self.edit.title,
+            NativeTarget::EditAuthor => &mut self.edit.author,
+            NativeTarget::AddTitle => &mut self.add.title,
+            NativeTarget::AddAuthor => &mut self.add.author,
+        }
+    }
+
+    /// Runs once per frame: launches a requested dialog on a worker thread and
+    /// collects a finished one — the UI never blocks, no beachball.
+    fn pump_native(&mut self, ctx: &egui::Context) {
+        if let Some(target) = self.native_request.take() {
+            let prompt = match target {
+                NativeTarget::EditTitle | NativeTarget::AddTitle => "title",
+                NativeTarget::EditAuthor | NativeTarget::AddAuthor => "author",
+            };
+            let current = self.field_of(target).clone();
+            let (tx, rx) = std::sync::mpsc::channel();
+            let pid_slot = self.native_child.clone();
+            std::thread::spawn(move || {
+                let _ = tx.send(native_input_blocking(prompt, &current, &pid_slot));
+            });
+            self.native_pending = Some((target, rx));
+        }
+        if let Some((target, rx)) = &self.native_pending {
+            let target = *target;
+            match rx.try_recv() {
+                Ok(result) => {
+                    if let Some(v) = result {
+                        *self.field_of(target) = v;
+                    }
+                    self.native_pending = None;
+                }
+                Err(std::sync::mpsc::TryRecvError::Empty) => {
+                    ctx.request_repaint_after(std::time::Duration::from_millis(100));
+                }
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                    self.native_pending = None;
+                }
+            }
+        }
+    }
+
     fn side_panel(&mut self, ui: &mut egui::Ui) {
         let Some(row) = self.selected_row() else {
             ui.label("select a book");
@@ -132,9 +242,15 @@ impl App {
         ui.label(format!("read in {}", years_str(&row.years)));
         ui.separator();
 
-        ui.label("title");
+        ui.horizontal(|ui| {
+            ui.label("title");
+            self.native_button(ui, NativeTarget::EditTitle);
+        });
         ui.text_edit_singleline(&mut self.edit.title);
-        ui.label("author");
+        ui.horizontal(|ui| {
+            ui.label("author");
+            self.native_button(ui, NativeTarget::EditAuthor);
+        });
         ui.text_edit_singleline(&mut self.edit.author);
         ui.label("edition");
         ui.text_edit_singleline(&mut self.edit.edition);
@@ -228,14 +344,21 @@ impl App {
                     ui.end_row();
                     for row in &rows {
                         let selected = self.selected.as_deref() == Some(row.id.as_str());
-                        if ui.selectable_label(selected, &row.id).clicked() {
-                            self.select(row);
+                        let cells = [
+                            row.id.clone(),
+                            row.title.clone(),
+                            row.author.clone(),
+                            row.edition.clone(),
+                            years_str(&row.years),
+                            worked_label(row.worked).to_string(),
+                        ];
+                        // The whole row is clickable — any cell selects the book
+                        // and opens the edit panel on the right.
+                        for cell in cells {
+                            if ui.selectable_label(selected, cell).clicked() {
+                                self.select(row);
+                            }
                         }
-                        ui.label(&row.title);
-                        ui.label(&row.author);
-                        ui.label(&row.edition);
-                        ui.label(years_str(&row.years));
-                        ui.label(worked_label(row.worked));
                         ui.end_row();
                     }
                 });
@@ -246,8 +369,10 @@ impl App {
         ui.horizontal(|ui| {
             ui.label("title");
             ui.text_edit_singleline(&mut self.add.title);
+            self.native_button(ui, NativeTarget::AddTitle);
             ui.label("author");
             ui.text_edit_singleline(&mut self.add.author);
+            self.native_button(ui, NativeTarget::AddAuthor);
             ui.label("edition");
             ui.add(egui::TextEdit::singleline(&mut self.add.edition).desired_width(80.0));
             ui.label("year");
@@ -301,8 +426,9 @@ impl App {
 }
 
 impl eframe::App for App {
-    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        egui::TopBottomPanel::top("top").show(ctx, |ui| {
+    fn ui(&mut self, root: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        self.pump_native(&root.ctx().clone());
+        egui::Panel::top("top").show(root, |ui| {
             ui.horizontal(|ui| {
                 ui.heading("bookward");
                 ui.separator();
@@ -333,14 +459,14 @@ impl eframe::App for App {
                 self.add_form(ui);
             }
         });
-        egui::TopBottomPanel::bottom("status").show(ctx, |ui| {
+        egui::Panel::bottom("status").show(root, |ui| {
             ui.label(self.stats_line());
             ui.label(egui::RichText::new(&self.status).weak());
         });
-        egui::SidePanel::right("detail")
-            .default_width(280.0)
-            .show(ctx, |ui| self.side_panel(ui));
-        egui::CentralPanel::default().show(ctx, |ui| self.table(ui));
+        egui::Panel::right("detail")
+            .default_size(280.0)
+            .show(root, |ui| self.side_panel(ui));
+        egui::CentralPanel::default().show(root, |ui| self.table(ui));
     }
 }
 
