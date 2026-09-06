@@ -52,3 +52,4 @@ Thumbs.db
 .claude/
 CLAUDE.local.md
 CLAUDE.md
+rust/target/

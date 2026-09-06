@@ -44,6 +44,22 @@ jobs:
       - name: Test
         run: ctest --test-dir build --build-config Release --output-on-failure
 
+  rust-gui:
+    name: rust gui (ffi bridge)
+    runs-on: macos-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: rust
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - run: cargo fmt --check
+      - run: cargo clippy --all-targets -- -D warnings
+      - run: cargo test   # builds the whole C++ tree via build.rs, then the FFI smoke
+
   sanitizers:
     name: sanitizers (ASan+UBSan)
     runs-on: ubuntu-latest
