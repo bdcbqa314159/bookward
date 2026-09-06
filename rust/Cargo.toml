@@ -1,0 +1,15 @@
+[package]
+name = "bookward-gui"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+cxx = "1"
+eframe = "0.29"
+
+[build-dependencies]
+cxx-build = "1"
+cmake = "0.1"
+
+[profile.release]
+strip = true
