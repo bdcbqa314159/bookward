@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Build release and plain-copy the two executables to a destination directory.
-# No symlinks — the copies are fully self-contained (only OS dylibs).
+# Build release and plain-copy the executables (CLI, TUI, and — when cargo is
+# available — the Rust GUI) to a destination directory. No symlinks; the
+# copies are fully self-contained (only OS dylibs).
 #
 #   scripts/dist.sh [dest]      dest defaults to ~/bin
 set -euo pipefail
@@ -13,9 +14,18 @@ cmake --build "$repo/build/release" -j --target bookward bookward-tui > /dev/nul
 
 mkdir -p "$dest"
 cp "$repo/build/release/bookward" "$repo/build/release/bookward-tui" "$dest/"
+exes=(bookward bookward-tui)
+
+if command -v cargo > /dev/null; then
+  (cd "$repo/rust" && cargo build --release > /dev/null 2>&1)
+  cp "$repo/rust/target/release/bookward-gui" "$dest/"
+  exes+=(bookward-gui)
+else
+  echo "cargo not found — skipping the GUI"
+fi
 
 echo "installed to $dest:"
-for exe in bookward bookward-tui; do
+for exe in "${exes[@]}"; do
   echo "  $dest/$exe"
 done
 echo "dynamic deps of bookward-tui (should be OS-only):"
