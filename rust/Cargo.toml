@@ -5,7 +5,7 @@ edition = "2021"
 
 [dependencies]
 cxx = "1"
-eframe = "0.29"
+eframe = "0.36"
 
 [build-dependencies]
 cxx-build = "1"
