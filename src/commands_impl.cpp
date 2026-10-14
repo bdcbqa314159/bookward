@@ -42,9 +42,32 @@ std::string next_id(dataward::Store& store) {
   return buf;
 }
 
+// A book can be read more than once in a year, and two such readings carry no
+// data beyond the year — they are indistinguishable. So their ids only need to
+// be distinct: bk-0001-2026, then bk-0001-2026-2, -3, ... The n-th reading of a
+// year is always suffix n, because dropping one always drops the last.
+std::string reading_id(const std::string& book_id, std::int64_t year, std::size_t n) {
+  std::string id = book_id + "-" + std::to_string(year);
+  if (n > 1) id += "-" + std::to_string(n);
+  return id;
+}
+
+std::size_t readings_in(dataward::Store& store, const std::string& book_id, std::int64_t year) {
+  // ponytail: count by fetching the rows; dataward has no count<T> yet (a
+  // candidate promotion) and a book's readings in one year are a handful.
+  return store.where<Reading>("\"book_id\" = :b0 AND \"year\" = :b1", book_id, year).size();
+}
+
 void log_reading(dataward::Store& store, const std::string& book_id, std::int64_t year) {
   check_year(year);
-  store.put(Reading{book_id + "-" + std::to_string(year), book_id, year});
+  store.put(
+      Reading{reading_id(book_id, year, readings_in(store, book_id, year) + 1), book_id, year});
+}
+
+// years_of() is year-ordered, so duplicates are adjacent.
+std::vector<std::int64_t> distinct(std::vector<std::int64_t> years) {
+  years.erase(std::unique(years.begin(), years.end()), years.end());
+  return years;
 }
 
 std::string years_str(const std::vector<std::int64_t>& years) {
@@ -108,7 +131,11 @@ std::string cmd_add(dataward::Store& store, const std::string& title, const std:
 std::string cmd_again(dataward::Store& store, const std::string& id,
                       std::optional<std::int64_t> year) {
   auto b = must_get(store, id);
+  // Counting a year's readings and writing the next suffix must be atomic, or
+  // two frontends logging the same re-read would both claim the same id.
+  auto txn = store.begin_immediate();
   log_reading(store, id, year.value_or(this_year()));
+  txn.commit();
   return one_line(store, b);
 }
 
@@ -128,17 +155,17 @@ std::string cmd_year(dataward::Store& store, const std::string& id,
                      std::optional<std::int64_t> from, std::int64_t to) {
   check_year(to);
   auto b = must_get(store, id);
-  const auto years = years_of(store, id);
+  const auto years = distinct(years_of(store, id));
   if (!from) {
     if (years.size() != 1)
       throw std::runtime_error("'" + id + "' was read in " + std::to_string(years.size()) +
                                " years — say which one: year <id> <from> <to>");
     from = years.front();
   }
-  if (std::find(years.begin(), years.end(), *from) == years.end())
-    throw std::runtime_error("'" + id + "' has no reading in " + std::to_string(*from));
-  auto txn = store.begin();
-  store.remove<Reading>(id + "-" + std::to_string(*from));
+  auto txn = store.begin_immediate();
+  const auto n = readings_in(store, id, *from);
+  if (n == 0) throw std::runtime_error("'" + id + "' has no reading in " + std::to_string(*from));
+  store.remove<Reading>(reading_id(id, *from, n));
   log_reading(store, id, to);
   txn.commit();
   return one_line(store, b);
@@ -155,17 +182,18 @@ std::string cmd_remove(dataward::Store& store, const std::string& id,
                        std::optional<std::int64_t> year) {
   auto b = must_get(store, id);
   if (year) {
-    const auto years = years_of(store, id);
-    if (std::find(years.begin(), years.end(), *year) == years.end())
-      throw std::runtime_error("'" + id + "' has no reading in " + std::to_string(*year));
-    if (years.size() == 1)
+    if (years_of(store, id).size() == 1)
       throw std::runtime_error("that is the only reading — remove the book itself: remove " + id);
-    store.remove<Reading>(id + "-" + std::to_string(*year));
+    auto txn = store.begin_immediate();
+    const auto n = readings_in(store, id, *year);
+    if (n == 0) throw std::runtime_error("'" + id + "' has no reading in " + std::to_string(*year));
+    store.remove<Reading>(reading_id(id, *year, n));
+    txn.commit();
     return one_line(store, b);
   }
   const auto line = "removed " + one_line(store, b);
   auto txn = store.begin();
-  for (auto y : years_of(store, id)) store.remove<Reading>(id + "-" + std::to_string(y));
+  for (const auto& r : store.where<Reading>("\"book_id\" = :b0", id)) store.remove<Reading>(r.id);
   store.remove<Book>(id);
   txn.commit();
   return line;
