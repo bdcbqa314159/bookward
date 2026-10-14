@@ -72,9 +72,34 @@ TEST(Commands, RereadKeepsIdAndCountsInBothYears) {
   EXPECT_EQ(bookward::years_of(store, "bk-0001"), (std::vector<std::int64_t>{2021, 2026}));
   EXPECT_EQ(store.all<bookward::Book>().size(), 1u) << "still one book, one PDF";
 
-  // Logging the same year twice is idempotent.
+  // Reading the same book twice in one year is a real event, not a duplicate.
   bookward::cmd_again(store, "bk-0001", 2026);
-  EXPECT_EQ(bookward::years_of(store, "bk-0001").size(), 2u);
+  EXPECT_EQ(bookward::years_of(store, "bk-0001"), (std::vector<std::int64_t>{2021, 2026, 2026}));
+}
+
+TEST(Commands, SameBookTwiceInOneYear) {
+  auto store = fresh("cmd_same_year.db");
+  bookward::cmd_add(store, "Hamlet", "Shakespeare", "", 2026, std::nullopt);
+  bookward::cmd_again(store, "bk-0001", 2026);
+  bookward::cmd_again(store, "bk-0001", 2026);
+
+  EXPECT_EQ(store.all<bookward::Book>().size(), 1u) << "still one book, one PDF";
+  EXPECT_EQ(bookward::years_of(store, "bk-0001"), (std::vector<std::int64_t>{2026, 2026, 2026}));
+  const auto stats =
+      bookward::year_counts(store.all<bookward::Book>(), store.all<bookward::Reading>());
+  EXPECT_EQ(stats.at(2026).first, 3) << "three readings in 2026";
+
+  // 'from' stays optional while every reading is in the same year.
+  bookward::cmd_year(store, "bk-0001", std::nullopt, 2025);
+  EXPECT_EQ(bookward::years_of(store, "bk-0001"), (std::vector<std::int64_t>{2025, 2026, 2026}));
+
+  // Forgetting one 2026 reading leaves the other; the guard is about the last
+  // reading of the book, not the last of the year.
+  bookward::cmd_remove(store, "bk-0001", 2026);
+  EXPECT_EQ(bookward::years_of(store, "bk-0001"), (std::vector<std::int64_t>{2025, 2026}));
+  bookward::cmd_remove(store, "bk-0001", 2026);
+  bookward::cmd_remove(store, "bk-0001", std::nullopt);
+  EXPECT_TRUE(store.all<bookward::Reading>().empty()) << "no orphaned suffixed readings";
 }
 
 TEST(Commands, YearMovesOneReading) {

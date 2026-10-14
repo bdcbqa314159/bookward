@@ -346,7 +346,9 @@ int main() {
         }
         if (e == Event::Character('y')) {
           const auto years = bookward::years_of(store, selected_id());
-          if (years.size() <= 1) {
+          // Year-ordered: front == back means every reading is in one year,
+          // even when there are several of them.
+          if (years.empty() || years.front() == years.back()) {
             year_from = years.empty() ? std::nullopt : std::optional(years.front());
             mode = Mode::YearTo;
           } else {
