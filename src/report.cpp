@@ -43,17 +43,20 @@ std::string tex(const std::string& s) {
   return out;
 }
 
-// Bibliography entry: Author. <Title>. Edition. (id) — worked
-// The italic markers differ per format; everything else is shared.
-std::string entry(const Book& b, const std::string& italic_open, const std::string& italic_close,
-                  bool escape) {
+// Bibliography entry: Author. <Title>. Edition. (id) — read twice — worked
+// The italic markers and the dash differ per format; everything else is shared.
+std::string entry(const Book& b, int times, const std::string& italic_open,
+                  const std::string& italic_close, bool escape) {
   auto t = [&](const std::string& s) { return escape ? tex(s) : s; };
+  const std::string dash = escape ? " --- " : " — ";
   std::string line;
   if (!b.author.empty()) line += t(b.author) + ". ";
   line += italic_open + t(b.title) + italic_close + ".";
   if (!b.edition.empty()) line += " " + t(b.edition) + ".";
   line += " (" + b.id + ")";
-  if (b.worked && *b.worked) line += escape ? " --- worked" : " — **worked**";
+  if (times == 2) line += dash + "read twice";
+  if (times > 2) line += dash + "read " + std::to_string(times) + " times";
+  if (b.worked && *b.worked) line += dash + (escape ? "worked" : "**worked**");
   return line;
 }
 
@@ -67,10 +70,21 @@ std::string cmd_report(dataward::Store& store, std::int64_t year, const std::str
   std::unordered_map<std::string, Book> books;
   for (auto& b : store.all<Book>()) books.emplace(b.id, std::move(b));
 
-  // Group by year, newest first. A book read in two years appears under both.
-  std::map<std::int64_t, std::vector<const Book*>, std::greater<>> by_year;
-  for (const auto& r : readings)
-    if (auto it = books.find(r.book_id); it != books.end()) by_year[r.year].push_back(&it->second);
+  // Group by year, newest first. A book read in two years appears under both,
+  // but a book read twice in ONE year is two readings and one entry: list it
+  // once and say how many times. Readings arrive ordered by book within a
+  // year, so the repeats are adjacent.
+  std::map<std::int64_t, std::vector<std::pair<const Book*, int>>, std::greater<>> by_year;
+  for (const auto& r : readings) {
+    auto it = books.find(r.book_id);
+    if (it == books.end()) continue;
+    auto& group = by_year[r.year];
+    if (!group.empty() && group.back().first == &it->second) {
+      ++group.back().second;
+    } else {
+      group.emplace_back(&it->second, 1);
+    }
+  }
 
   const std::string name = year == 0 ? "reading-catalog" : "reading-" + std::to_string(year);
   const std::string title =
@@ -91,8 +105,9 @@ std::string cmd_report(dataward::Store& store, std::int64_t year, const std::str
   for (const auto& [y, group] : by_year) {
     doc += "\\section*{" + std::to_string(y) + " --- " + std::to_string(group.size()) + " book" +
            (group.size() == 1 ? "" : "s") + "}\n";
-    for (const Book* b : group)
-      doc += "\\noindent\\hangindent=2em " + entry(*b, "\\emph{", "}", true) + "\\par\\medskip\n";
+    for (const auto& [b, times] : group)
+      doc += "\\noindent\\hangindent=2em " + entry(*b, times, "\\emph{", "}", true) +
+             "\\par\\medskip\n";
   }
   doc += "\\end{document}\n";
 
@@ -101,7 +116,7 @@ std::string cmd_report(dataward::Store& store, std::int64_t year, const std::str
   for (const auto& [y, group] : by_year) {
     md += "\n## " + std::to_string(y) + " — " + std::to_string(group.size()) + " book" +
           (group.size() == 1 ? "" : "s") + "\n\n";
-    for (const Book* b : group) md += "- " + entry(*b, "*", "*", false) + "\n";
+    for (const auto& [b, times] : group) md += "- " + entry(*b, times, "*", "*", false) + "\n";
   }
 
   const auto dir = std::filesystem::path(out_dir.empty() ? "." : out_dir);

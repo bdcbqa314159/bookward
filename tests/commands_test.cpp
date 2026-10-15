@@ -174,6 +174,36 @@ TEST(Report, BibliographyEntriesInTexAndMarkdown) {
       << "markdown is unescaped";
 }
 
+TEST(Report, SameYearRereadIsOneEntryWithACount) {
+  auto store = fresh("cmd_report_dupes.db");
+  bookward::cmd_add(store, "Hamlet", "Shakespeare", "", 2026, std::nullopt);
+  bookward::cmd_again(store, "bk-0001", 2026);
+  bookward::cmd_again(store, "bk-0001", 2026);
+  bookward::cmd_add(store, "Other", "Someone", "", 2026, std::nullopt);
+
+  const auto dir = std::filesystem::path(testing::TempDir()) / "bookward_report_dupes";
+  bookward::cmd_report(store, 2026, dir.string(), /*compile=*/false);
+
+  std::ifstream md_in(dir / "reading-2026.md");
+  std::string md((std::istreambuf_iterator<char>(md_in)), std::istreambuf_iterator<char>());
+  EXPECT_NE(md.find("4 readings, 2 distinct books"), std::string::npos);
+  EXPECT_NE(md.find("## 2026 — 2 books"), std::string::npos)
+      << "the heading counts books, not readings";
+  EXPECT_NE(md.find("- Shakespeare. *Hamlet*. (bk-0001) — read 3 times"), std::string::npos);
+
+  const auto first = md.find("*Hamlet*");
+  ASSERT_NE(first, std::string::npos);
+  EXPECT_EQ(md.find("*Hamlet*", first + 1), std::string::npos)
+      << "one entry per book per year, however many readings";
+
+  // Two readings reads as "twice"; the tex twin uses --- as its dash.
+  bookward::cmd_remove(store, "bk-0001", 2026);
+  bookward::cmd_report(store, 2026, dir.string(), /*compile=*/false);
+  std::ifstream tex_in(dir / "reading-2026.tex");
+  std::string tex((std::istreambuf_iterator<char>(tex_in)), std::istreambuf_iterator<char>());
+  EXPECT_NE(tex.find("(bk-0001) --- read twice"), std::string::npos);
+}
+
 TEST(TableModel, YearsAggregateAndFilter) {
   auto store = fresh("table_model.db");
   bookward::cmd_add(store, "Beta", "", "", 2026, true);

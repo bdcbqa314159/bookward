@@ -89,9 +89,17 @@ int main() {
     lines.push_back(text(b.title) | bold);
     if (!b.author.empty()) lines.push_back(text("by " + b.author));
     if (!b.edition.empty()) lines.push_back(text(b.edition));
+    // Years repeat when a book was read more than once in one year; say the
+    // year once with a count rather than rendering "2026, 2026".
+    const auto ys = bookward::years_of(store, b.id);
     std::string years;
-    for (auto y : bookward::years_of(store, b.id))
-      years += (years.empty() ? "read in " : ", ") + std::to_string(y);
+    for (std::size_t i = 0; i < ys.size();) {
+      std::size_t j = i;
+      while (j < ys.size() && ys[j] == ys[i]) ++j;
+      years += (years.empty() ? "read in " : ", ") + std::to_string(ys[i]);
+      if (j - i > 1) years += " (" + std::to_string(j - i) + ")";
+      i = j;
+    }
     lines.push_back(text(years));
     if (b.worked)
       lines.push_back(text(*b.worked ? "worked through" : "not worked through") | underlined);
