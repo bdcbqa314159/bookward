@@ -60,6 +60,14 @@ std::string entry(const Book& b, int times, const std::string& italic_open,
   return line;
 }
 
+// A year's heading counts READINGS, not entries: one book read three times in a
+// year is three readings on a single line, and the year is a 3, not a 1.
+int readings_in_year(const std::vector<std::pair<const Book*, int>>& group) {
+  int n = 0;
+  for (const auto& [b, times] : group) n += times;
+  return n;
+}
+
 }  // namespace
 
 std::string cmd_report(dataward::Store& store, std::int64_t year, const std::string& out_dir,
@@ -103,8 +111,9 @@ std::string cmd_report(dataward::Store& store, std::int64_t year, const std::str
   doc += "\\begin{document}\n\\maketitle\n";
   doc += tally + ".\n";
   for (const auto& [y, group] : by_year) {
-    doc += "\\section*{" + std::to_string(y) + " --- " + std::to_string(group.size()) + " book" +
-           (group.size() == 1 ? "" : "s") + "}\n";
+    const auto n = readings_in_year(group);
+    doc += "\\section*{" + std::to_string(y) + " --- " + std::to_string(n) + " reading" +
+           (n == 1 ? "" : "s") + "}\n";
     for (const auto& [b, times] : group)
       doc += "\\noindent\\hangindent=2em " + entry(*b, times, "\\emph{", "}", true) +
              "\\par\\medskip\n";
@@ -114,8 +123,9 @@ std::string cmd_report(dataward::Store& store, std::int64_t year, const std::str
   // --- Markdown twin (renders on GitHub, diffs as the list grows) -----------
   std::string md = "# " + title + "\n\n" + tally + ".\n";
   for (const auto& [y, group] : by_year) {
-    md += "\n## " + std::to_string(y) + " — " + std::to_string(group.size()) + " book" +
-          (group.size() == 1 ? "" : "s") + "\n\n";
+    const auto n = readings_in_year(group);
+    md += "\n## " + std::to_string(y) + " — " + std::to_string(n) + " reading" +
+          (n == 1 ? "" : "s") + "\n\n";
     for (const auto& [b, times] : group) md += "- " + entry(*b, times, "*", "*", false) + "\n";
   }
 
