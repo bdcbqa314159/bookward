@@ -302,8 +302,20 @@ impl App {
         if row.years.len() > 1 {
             ui.label("forget one reading:");
             ui.horizontal_wrapped(|ui| {
-                for y in row.years.clone() {
-                    if ui.button(y.to_string()).clicked() {
+                // Years repeat when a book was read more than once in one year.
+                // One button per distinct year, carrying how many readings it
+                // holds; a click forgets one of them. The bridge hands years
+                // over sorted, so dedup() is enough.
+                let mut distinct = row.years.clone();
+                distinct.dedup();
+                for y in distinct {
+                    let n = row.years.iter().filter(|&&v| v == y).count();
+                    let label = if n > 1 {
+                        format!("{y} ({n})")
+                    } else {
+                        y.to_string()
+                    };
+                    if ui.button(label).clicked() {
                         let r = self.log.pin_mut().remove_reading(&row.id, y);
                         self.done(r);
                     }
