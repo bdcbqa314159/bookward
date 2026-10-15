@@ -17,6 +17,11 @@ fn years_str(years: &[i64]) -> String {
         .join(", ")
 }
 
+/// Mirrors the C++ open_log(): $BOOKWARD_DB wins, else ~/.bookward.db.
+fn db_path() -> String {
+    std::env::var("BOOKWARD_DB").unwrap_or_else(|_| "~/.bookward.db".to_string())
+}
+
 fn parse_year(s: &str) -> Result<i64, String> {
     if s.trim().is_empty() {
         return Ok(0); // bridge convention: 0 = default/current
@@ -83,6 +88,7 @@ struct App {
     move_from: String,
     move_to: String,
     confirm_remove: bool,
+    show_about: bool,
     native_request: Option<NativeTarget>,
     native_pending: Option<(NativeTarget, std::sync::mpsc::Receiver<Option<String>>)>,
     native_child: std::sync::Arc<std::sync::Mutex<Option<u32>>>,
@@ -115,6 +121,7 @@ impl App {
             move_from: String::new(),
             move_to: String::new(),
             confirm_remove: false,
+            show_about: false,
             native_request: None,
             native_pending: None,
             native_child: std::sync::Arc::new(std::sync::Mutex::new(None)),
@@ -412,6 +419,60 @@ impl App {
         });
     }
 
+    fn about_window(&mut self, ctx: &egui::Context) {
+        let mut open = self.show_about;
+        let mut close_clicked = false;
+        egui::Window::new("about bookward")
+            .open(&mut open)
+            .collapsible(false)
+            .resizable(false)
+            .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+            .show(ctx, |ui| {
+                ui.vertical_centered(|ui| {
+                    ui.heading("bookward");
+                    ui.label(
+                        egui::RichText::new(format!("version {}", env!("CARGO_PKG_VERSION")))
+                            .weak(),
+                    );
+                });
+                ui.add_space(8.0);
+                ui.label(
+                    "A reading catalog. One book is one row, and its generated id names the \
+                     PDF on the archive drive — re-reading adds a reading, never a second book.",
+                );
+                ui.add_space(8.0);
+                ui.separator();
+                ui.add_space(4.0);
+                egui::Grid::new("about_facts")
+                    .num_columns(2)
+                    .spacing([14.0, 6.0])
+                    .show(ui, |ui| {
+                        for (key, value) in [
+                            (
+                                "stack",
+                                "egui → cxx → bookward_core → dataward → SQLite".to_string(),
+                            ),
+                            ("database", db_path()),
+                            (
+                                "license",
+                                "MIT — Bernardo Cohen / deLaPatada Software".to_string(),
+                            ),
+                        ] {
+                            ui.label(egui::RichText::new(key).weak());
+                            ui.label(value);
+                            ui.end_row();
+                        }
+                    });
+                ui.add_space(10.0);
+                ui.vertical_centered(|ui| {
+                    if ui.button("close").clicked() {
+                        close_clicked = true;
+                    }
+                });
+            });
+        self.show_about = open && !close_clicked;
+    }
+
     fn stats_line(&self) -> String {
         use std::collections::BTreeMap;
         let mut per_year: BTreeMap<i64, i64> = BTreeMap::new();
@@ -466,6 +527,9 @@ impl eframe::App for App {
                 if ui.button("refresh").clicked() {
                     self.refresh();
                 }
+                if ui.button("about").clicked() {
+                    self.show_about = !self.show_about;
+                }
             });
             if self.show_add {
                 self.add_form(ui);
@@ -479,6 +543,7 @@ impl eframe::App for App {
             .default_size(280.0)
             .show(root, |ui| self.side_panel(ui));
         egui::CentralPanel::default().show(root, |ui| self.table(ui));
+        self.about_window(&root.ctx().clone());
     }
 }
 
