@@ -17,7 +17,7 @@ constexpr const char* kUsage = R"(bookward — a reading catalog (ids name the P
   bookward worked <id> yes|no|clear
   bookward year <id> [from] <to>        move a reading to another year
   bookward remove <id> [--year Y]       forget one reading, or the whole book
-  bookward report [year]                LaTeX/PDF catalog (no year = everything)
+  bookward report [year] [--out DIR]    LaTeX/PDF + Markdown catalog (no year = all)
 )";
 
 // Pulls "--flag value" out of args (and erases it); nullopt when absent.

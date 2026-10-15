@@ -59,3 +59,7 @@ cd rust && cargo test        # FFI smoke across the whole C++ stack
 
 `scripts/dist.sh [dest]` builds release and copies the binaries to `dest`
 (default `~/bin`), GUI included when cargo is available.
+
+## License
+
+[MIT](LICENSE) — Bernardo Cohen / deLaPatada Software
