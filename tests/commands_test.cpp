@@ -168,7 +168,7 @@ TEST(Report, BibliographyEntriesInTexAndMarkdown) {
 
   std::ifstream md_in(dir / "reading-catalog.md");
   std::string md((std::istreambuf_iterator<char>(md_in)), std::istreambuf_iterator<char>());
-  EXPECT_NE(md.find("## 2026 — 2 books"), std::string::npos);
+  EXPECT_NE(md.find("## 2026 — 2 readings"), std::string::npos);
   EXPECT_NE(md.find("- Shreve. *Recent*. 2nd. (bk-0002) — **worked**"), std::string::npos);
   EXPECT_NE(md.find("- A_Uthor. *Tom & Jerry 100% Guide*. 3rd. (bk-0001)"), std::string::npos)
       << "markdown is unescaped";
@@ -187,8 +187,8 @@ TEST(Report, SameYearRereadIsOneEntryWithACount) {
   std::ifstream md_in(dir / "reading-2026.md");
   std::string md((std::istreambuf_iterator<char>(md_in)), std::istreambuf_iterator<char>());
   EXPECT_NE(md.find("4 readings, 2 distinct books"), std::string::npos);
-  EXPECT_NE(md.find("## 2026 — 2 books"), std::string::npos)
-      << "the heading counts books, not readings";
+  EXPECT_NE(md.find("## 2026 — 4 readings"), std::string::npos)
+      << "the heading counts readings: 3 of Hamlet and 1 of Other, on 2 lines";
   EXPECT_NE(md.find("- Shakespeare. *Hamlet*. (bk-0001) — read 3 times"), std::string::npos);
 
   const auto first = md.find("*Hamlet*");
